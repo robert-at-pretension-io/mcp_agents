@@ -238,6 +238,7 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
                     orchestrator,
                     conversation_history, # Pass the whole history
                     run_config=run_config,
+                    max_turns=15, # Prevent runaway loops within a single turn
                     # context=None # No global context needed for this example
                 )
 
@@ -321,8 +322,8 @@ async def main():
                 # model_settings=ModelSettings(temperature=0.5), # Global settings override
                 tracing_disabled=False, # Enable tracing (requires LangSmith/Helicone setup)
                 workflow_name="AgentREPLSystem",
-                trace_metadata={"session_id": f"repl_{os.getpid()}"}, # Example metadata
-                max_turns=15 # Prevent runaway loops within a single turn
+                trace_metadata={"session_id": f"repl_{os.getpid()}"} # Example metadata
+                # max_turns is passed directly to Runner.run
             )
 
             # Run the REPL
