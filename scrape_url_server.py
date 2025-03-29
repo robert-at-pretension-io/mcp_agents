@@ -171,17 +171,22 @@ async def scrape_url(ctx: Context, url: str, render_js: bool = True) -> str:
                 error_detail = error_json['message']
         except json.JSONDecodeError:
              pass # Keep original text if not JSON
+        print(f"Caught exception in scrape_url: {e}") # Added logging
         return (f"Error: ScrapingBee API request for {url} failed with status {e.response.status_code}. "
                 f"Detail: {error_detail}")
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e: # Added variable e
+         print(f"Caught exception in scrape_url: {e}") # Added logging
          return f"Error: Request to ScrapingBee timed out after {client_timeout_sec} seconds for URL: {url}"
     except httpx.RequestError as e:
         # Catch network errors, DNS errors, etc.
+        print(f"Caught exception in scrape_url: {e}") # Added logging
         return f"Error: Network request to ScrapingBee failed for {url}: {e}"
     except ValueError as e: # Catch URL parsing errors etc.
+         print(f"Caught exception in scrape_url: {e}") # Added logging
          return f"Error processing URL or parameters for {url}: {e}"
     except Exception as e:
         # Catch-all for unexpected errors during processing
+        print(f"Caught exception in scrape_url: {e}") # Added logging
         return f"An unexpected error occurred during scraping {url}: {e}"
 
 

@@ -134,15 +134,20 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
                  error_detail = json.dumps(error_json, indent=2) # Pretty print JSON error
         except json.JSONDecodeError:
              pass # Keep original text if not JSON
+        print(f"Caught exception in brave_search: {e}") # Added logging
         return (f"Error: Brave Search API request failed with status {e.response.status_code}. "
                 f"Detail: {error_detail}")
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e: # Added variable e
+         print(f"Caught exception in brave_search: {e}") # Added logging
          return f"Error: Request to Brave Search API timed out."
     except httpx.RequestError as e:
+        print(f"Caught exception in brave_search: {e}") # Added logging
         return f"Error: Network request to Brave Search API failed: {e}"
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e: # Added variable e
+         print(f"Caught exception in brave_search: {e}") # Added logging
          return f"Error: Failed to parse JSON response from Brave Search API."
     except Exception as e:
+        print(f"Caught exception in brave_search: {e}") # Added logging
         return f"An unexpected error occurred during Brave search: {e}"
 
 
