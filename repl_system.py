@@ -108,6 +108,11 @@ def create_specialist_agents(mcp_servers: Dict[str, MCPServerStdio]) -> Dict[str
             """,
             model=DEFAULT_MODEL,
             mcp_servers=search_servers,
+            # --- Debugging: Force tool use ---
+            model_settings=ModelSettings(
+                tool_choice="brave_search" # Force the agent to use this tool
+            )
+            # --- End Debugging ---
         )
 
     # --- System Agent ---
