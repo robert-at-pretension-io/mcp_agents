@@ -242,9 +242,36 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
                     # context=None # No global context needed for this example
                 )
 
+            # --- Print Tool Interactions ---
+            print("\n--- Agent Turn Details ---")
+            final_assistant_message_index = -1
+            for i, message in enumerate(result.history):
+                role = message.get("role")
+                content = message.get("content", "")
+
+                if role == "tool_call":
+                    tool_name = message.get("name", "unknown_tool")
+                    tool_args = message.get("arguments", {})
+                    print(f"  Tool Call: {tool_name}({tool_args})")
+                elif role == "tool_output":
+                    tool_name = message.get("name", "unknown_tool")
+                    # Truncate long outputs for readability
+                    output_str = str(content)
+                    max_len = 200
+                    if len(output_str) > max_len:
+                        output_str = output_str[:max_len] + "..."
+                    print(f"  Tool Output ({tool_name}): {output_str}")
+                elif role == "assistant":
+                    # Keep track of the last assistant message index
+                    final_assistant_message_index = i
+
+            print("--- End Agent Turn Details ---\n")
+
+            # --- Extract Final Assistant Response ---
+            # The final output might be slightly different from the last assistant message
+            # if post-processing occurs, but usually it's the content of the last one.
             assistant_response = result.final_output
             if isinstance(assistant_response, dict) and 'content' in assistant_response:
-                 # Handle potential structured output if orchestrator was configured differently
                  assistant_response_content = assistant_response['content']
             elif isinstance(assistant_response, str):
                 assistant_response_content = assistant_response
