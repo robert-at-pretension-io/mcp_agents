@@ -33,19 +33,16 @@ ORCHESTRATOR_MODEL = "gpt-4o" # Often benefits from a more powerful model
 
 # --- MCP Server Management ---
 
-async def start_mcp_servers(script_paths: Dict[str, str]) -> Dict[str, MCPServerStdio]:
-    """Starts MCP servers as subprocesses."""
+def create_mcp_server_instances(script_paths: Dict[str, str]) -> Dict[str, MCPServerStdio]:
+    """Creates MCPServerStdio instances for each script path."""
     servers = {}
-    tasks = []
-    server_map = {} # To map task back to server name
-
-    print("Starting MCP Servers...")
+    print("Creating MCP Server instances...")
     for name, script_path in script_paths.items():
         if not os.path.exists(script_path):
-             print(f"Warning: Script not found for server '{name}': {script_path}. Skipping.")
-             continue
+            print(f"Warning: Script not found for server '{name}': {script_path}. Skipping.")
+            continue
 
-        print(f"  Starting {name} server ({script_path})...")
+        print(f"  Creating instance for {name} server ({script_path})...")
         server = MCPServerStdio(
             params={
                 "command": sys.executable, # Use the current Python interpreter
@@ -54,38 +51,14 @@ async def start_mcp_servers(script_paths: Dict[str, str]) -> Dict[str, MCPServer
             cache_tools_list=True # Cache tools for performance
         )
         servers[name] = server
-        task = asyncio.create_task(server.start(), name=f"start_{name}")
-        tasks.append(task)
-        server_map[task] = name
+    print("MCP Server instances created.")
+    return servers
 
-    # Wait for all servers to start
-    done, pending = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
-
-    # Check for startup errors
-    successful_servers = {}
-    for task in done:
-        server_name = server_map[task]
-        try:
-            await task # Raise exception if server failed to start
-            successful_servers[server_name] = servers[server_name]
-            print(f"  Successfully started {server_name} server.")
-            # Optional: List tools after start
-            # tools = await servers[server_name].list_tools()
-            # print(f"    Tools for {server_name}: {[t.name for t in tools]}")
-        except Exception as e:
-            print(f"Error starting server '{server_name}': {e}")
-            # Ensure server is closed if startup failed partially
-            await servers[server_name].close()
-
-    if not successful_servers:
-        raise RuntimeError("Failed to start any MCP servers. Exiting.")
-
-    print("MCP Servers started.")
-    return successful_servers
+# Note: Stopping servers is handled by AsyncExitStack in main()
 
 async def stop_mcp_servers(servers: Dict[str, MCPServerStdio]):
-    """Stops all MCP servers."""
-    print("Stopping MCP Servers...")
+    """Stops all MCP servers (Deprecated - Use AsyncExitStack)."""
+    print("Stopping MCP Servers (using explicit stop - prefer AsyncExitStack)...")
     tasks = [asyncio.create_task(server.close(), name=f"close_{name}") for name, server in servers.items()]
     if tasks:
         await asyncio.wait(tasks)
@@ -300,21 +273,45 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
 # --- Main Execution ---
 
 async def main():
-    mcp_servers: Dict[str, MCPServerStdio] = {}
     # Use AsyncExitStack to ensure servers are cleaned up
     async with AsyncExitStack() as stack:
+        started_mcp_servers: Dict[str, MCPServerStdio] = {}
         try:
-            # Start MCP Servers
-            mcp_servers = await start_mcp_servers(SERVER_SCRIPTS)
-            # Ensure servers are closed on exit
-            for server in mcp_servers.values():
-                 await stack.enter_async_context(server) # server implements __aenter__/__aexit__
+            # 1. Create MCP Server Instances
+            potential_mcp_servers = create_mcp_server_instances(SERVER_SCRIPTS)
 
-            # Create Specialist Agents
-            specialist_agents = create_specialist_agents(mcp_servers)
+            # 2. Start MCP Servers using AsyncExitStack
+            print("Attempting to start MCP Servers...")
+            for name, server in potential_mcp_servers.items():
+                try:
+                    print(f"  Starting {name} server...")
+                    # Enter the server's async context (this starts it)
+                    # The stack will call server.__aexit__ automatically on exit
+                    await stack.enter_async_context(server)
+                    started_mcp_servers[name] = server
+                    print(f"  Successfully started {name} server.")
+                    # Optional: List tools after start
+                    # try:
+                    #     tools = await server.list_tools()
+                    #     print(f"    Tools for {name}: {[t.name for t in tools]}")
+                    # except Exception as list_e:
+                    #     print(f"    Warning: Could not list tools for {name}: {list_e}")
+                except Exception as e:
+                    print(f"Error starting server '{name}': {e}")
+                    # Server failed to start, AsyncExitStack won't manage it,
+                    # and it shouldn't be passed to agents.
+
+            if not started_mcp_servers:
+                 print("Error: No MCP servers could be started successfully. Exiting.")
+                 return # Or raise an exception
+
+            print(f"Successfully started {len(started_mcp_servers)} MCP server(s).")
+
+            # 3. Create Specialist Agents with successfully started servers
+            specialist_agents = create_specialist_agents(started_mcp_servers)
             print(f"Created Specialist Agents: {list(specialist_agents.keys())}")
 
-            # Create Orchestrator Agent
+            # 4. Create Orchestrator Agent
             orchestrator_agent = create_orchestrator_agent(specialist_agents)
             print("Created Orchestrator Agent.")
 
