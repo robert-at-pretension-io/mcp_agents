@@ -102,6 +102,7 @@ async def scrape_url(ctx: Context, url: str, render_js: bool = True) -> str:
 
     NOTE: This tool requires the SCRAPINGBEE_API_KEY environment variable to be set.
     """
+    print(f"\n-> scrape_url called with url='{url}', render_js={render_js}") # Log Entry
     app_context: AppContext = ctx.lifespan
     try:
         api_key = validate_env_var("SCRAPINGBEE_API_KEY")
@@ -131,12 +132,12 @@ async def scrape_url(ctx: Context, url: str, render_js: bool = True) -> str:
     }
 
     try:
-        print(f"Scraping URL: {url} (render_js: {render_js}, timeout: {client_timeout_sec}s)")
+        print(f"   Making ScrapingBee API request: URL={base_api_url}, Params={params}") # Log API Call
         # Use the shared client from the context
         response = await app_context.http_client.get(base_api_url, params=params, timeout=client_timeout_sec)
-        response.raise_for_status() # Check for 4xx/5xx errors
-
         content_type = response.headers.get("content-type", "").lower()
+        print(f"   ScrapingBee API response status: {response.status_code}, Content-Type: {content_type}") # Log API Response Status
+        response.raise_for_status() # Check for 4xx/5xx errors
 
         # Check if response is HTML
         if "text/html" in content_type or "application/xhtml+xml" in content_type:
@@ -154,14 +155,20 @@ async def scrape_url(ctx: Context, url: str, render_js: bool = True) -> str:
             except Exception as url_parse_e:
                  print(f"Could not parse domain from URL {url}: {url_parse_e}")
 
-            return markdown_content + source_info
+            result_string = markdown_content + source_info
+            print(f"<- scrape_url returning successfully (HTML processed, length: {len(result_string)})") # Log Success Exit
+            return result_string
 
         elif "text/" in content_type or "application/json" in content_type:
              # Return plain text or JSON as is, maybe wrap in markdown code block
-             return f"Received non-HTML content type '{content_type}' from {url}:\n```\n{response.text}\n```"
+             result_string = f"Received non-HTML content type '{content_type}' from {url}:\n```\n{response.text}\n```"
+             print(f"<- scrape_url returning successfully (Non-HTML, length: {len(result_string)})") # Log Success Exit
+             return result_string
         else:
              # Handle binary or unknown types
-            return f"Error: Received unsupported content type '{content_type}' from {url}. Cannot process."
+            error_message = f"Error: Received unsupported content type '{content_type}' from {url}. Cannot process."
+            print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+            return error_message
 
     except httpx.HTTPStatusError as e:
         error_detail = e.response.text
@@ -171,23 +178,33 @@ async def scrape_url(ctx: Context, url: str, render_js: bool = True) -> str:
                 error_detail = error_json['message']
         except json.JSONDecodeError:
              pass # Keep original text if not JSON
-        print(f"Caught exception in scrape_url: {e}") # Added logging
-        return (f"Error: ScrapingBee API request for {url} failed with status {e.response.status_code}. "
-                f"Detail: {error_detail}")
+        print(f"Caught exception in scrape_url: {e}") # Existing logging
+        error_message = (f"Error: ScrapingBee API request for {url} failed with status {e.response.status_code}. "
+                         f"Detail: {error_detail}")
+        print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+        return error_message
     except httpx.TimeoutException as e: # Added variable e
-         print(f"Caught exception in scrape_url: {e}") # Added logging
-         return f"Error: Request to ScrapingBee timed out after {client_timeout_sec} seconds for URL: {url}"
+         print(f"Caught exception in scrape_url: {e}") # Existing logging
+         error_message = f"Error: Request to ScrapingBee timed out after {client_timeout_sec} seconds for URL: {url}"
+         print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+         return error_message
     except httpx.RequestError as e:
         # Catch network errors, DNS errors, etc.
-        print(f"Caught exception in scrape_url: {e}") # Added logging
-        return f"Error: Network request to ScrapingBee failed for {url}: {e}"
+        print(f"Caught exception in scrape_url: {e}") # Existing logging
+        error_message = f"Error: Network request to ScrapingBee failed for {url}: {e}"
+        print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+        return error_message
     except ValueError as e: # Catch URL parsing errors etc.
-         print(f"Caught exception in scrape_url: {e}") # Added logging
-         return f"Error processing URL or parameters for {url}: {e}"
+         print(f"Caught exception in scrape_url: {e}") # Existing logging
+         error_message = f"Error processing URL or parameters for {url}: {e}"
+         print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+         return error_message
     except Exception as e:
         # Catch-all for unexpected errors during processing
-        print(f"Caught exception in scrape_url: {e}") # Added logging
-        return f"An unexpected error occurred during scraping {url}: {e}"
+        print(f"Caught exception in scrape_url: {e}") # Existing logging
+        error_message = f"An unexpected error occurred during scraping {url}: {e}"
+        print(f"<- scrape_url returning error: {error_message}") # Log Error Exit
+        return error_message
 
 
 if __name__ == "__main__":

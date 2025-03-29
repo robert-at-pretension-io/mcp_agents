@@ -70,6 +70,7 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
 
     NOTE: This tool requires the BRAVE_API_KEY environment variable to be set.
     """
+    print(f"\n-> brave_search called with query='{query}', count={count}") # Log Entry
     app_context: AppContext = ctx.lifespan
     try:
         api_key = validate_env_var("BRAVE_API_KEY")
@@ -97,8 +98,9 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
     }
 
     try:
-        print(f"Performing Brave search for: '{query}' (count: {num_results})")
+        print(f"   Making Brave API request: URL={base_api_url}, Params={params}") # Log API Call
         response = await app_context.http_client.get(base_api_url, params=params, headers=headers)
+        print(f"   Brave API response status: {response.status_code}") # Log API Response Status
         response.raise_for_status() # Check for 4xx/5xx errors
 
         data = response.json()
@@ -123,7 +125,9 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
                 output += f"   Age: {page_age}\n"
             output += f"   Description: {description}\n\n"
 
-        return output.strip()
+        result_string = output.strip()
+        print(f"<- brave_search returning successfully (length: {len(result_string)})") # Log Success Exit
+        return result_string
 
     except httpx.HTTPStatusError as e:
         error_detail = e.response.text
@@ -134,21 +138,31 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
                  error_detail = json.dumps(error_json, indent=2) # Pretty print JSON error
         except json.JSONDecodeError:
              pass # Keep original text if not JSON
-        print(f"Caught exception in brave_search: {e}") # Added logging
-        return (f"Error: Brave Search API request failed with status {e.response.status_code}. "
-                f"Detail: {error_detail}")
+        print(f"Caught exception in brave_search: {e}") # Existing logging
+        error_message = (f"Error: Brave Search API request failed with status {e.response.status_code}. "
+                         f"Detail: {error_detail}")
+        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        return error_message
     except httpx.TimeoutException as e: # Added variable e
-         print(f"Caught exception in brave_search: {e}") # Added logging
-         return f"Error: Request to Brave Search API timed out."
+         print(f"Caught exception in brave_search: {e}") # Existing logging
+         error_message = f"Error: Request to Brave Search API timed out."
+         print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+         return error_message
     except httpx.RequestError as e:
-        print(f"Caught exception in brave_search: {e}") # Added logging
-        return f"Error: Network request to Brave Search API failed: {e}"
+        print(f"Caught exception in brave_search: {e}") # Existing logging
+        error_message = f"Error: Network request to Brave Search API failed: {e}"
+        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        return error_message
     except json.JSONDecodeError as e: # Added variable e
-         print(f"Caught exception in brave_search: {e}") # Added logging
-         return f"Error: Failed to parse JSON response from Brave Search API."
+         print(f"Caught exception in brave_search: {e}") # Existing logging
+         error_message = f"Error: Failed to parse JSON response from Brave Search API."
+         print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+         return error_message
     except Exception as e:
-        print(f"Caught exception in brave_search: {e}") # Added logging
-        return f"An unexpected error occurred during Brave search: {e}"
+        print(f"Caught exception in brave_search: {e}") # Existing logging
+        error_message = f"An unexpected error occurred during Brave search: {e}"
+        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        return error_message
 
 
 if __name__ == "__main__":
