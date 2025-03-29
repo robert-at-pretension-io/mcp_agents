@@ -264,13 +264,14 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
                         output_str = output_str[:max_len] + "..."
                     print(f"  Tool Output ({tool_name}): {output_str}")
                 elif item.type == "message_output_item":
-                    # Access attributes specific to MessageOutputItem
-                    role = getattr(item.message, 'role', 'unknown')
-                    content = getattr(item.message, 'content', '')
+                    # Access attributes specific to MessageOutputItem via raw_item
+                    # raw_item is of type ResponseOutputMessage
+                    role = getattr(item.raw_item, 'role', 'unknown')
+                    # Content is a list, we might need to process it (e.g., extract text)
+                    # For simplicity here, we'll just represent it as a string
+                    content = getattr(item.raw_item, 'content', '')
                     if role == "assistant":
-                         # You might want to print assistant messages during the turn too,
-                         # or just use the final_output at the end.
-                         # print(f"  Assistant Message: {content}")
+                         # We print the final consolidated output later
                          pass # We print the final consolidated output later
                     elif role == "user":
                          # This shouldn't typically happen in new_items unless it's complex
