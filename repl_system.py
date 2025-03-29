@@ -244,27 +244,39 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
 
             # --- Print Tool Interactions ---
             print("\n--- Agent Turn Details ---")
-            final_assistant_message_index = -1
             # Use result.new_items to access the generated items during the run
-            for i, message in enumerate(result.new_items):
-                role = message.get("role") # Note: RunItem might use 'type' instead of 'role'
-                content = message.get("content", "") # Adjust based on RunItem structure if needed
-
-                if role == "tool_call":
-                    tool_name = message.get("name", "unknown_tool")
-                    tool_args = message.get("arguments", {})
+            for i, item in enumerate(result.new_items):
+                # Check the type of the RunItem
+                if item.type == "tool_call_item":
+                    # Access attributes specific to ToolCallItem
+                    # Note: raw_item holds the actual tool call details (like ResponseFunctionToolCall)
+                    tool_name = getattr(item.raw_item, 'name', 'unknown_tool')
+                    tool_args = getattr(item.raw_item, 'arguments', {})
                     print(f"  Tool Call: {tool_name}({tool_args})")
-                elif role == "tool_output":
-                    tool_name = message.get("name", "unknown_tool")
+                elif item.type == "tool_call_output_item":
+                    # Access attributes specific to ToolCallOutputItem
+                    tool_name = getattr(item, 'tool_name', 'unknown_tool')
+                    output = getattr(item, 'output', '')
                     # Truncate long outputs for readability
-                    output_str = str(content)
+                    output_str = str(output)
                     max_len = 200
                     if len(output_str) > max_len:
                         output_str = output_str[:max_len] + "..."
                     print(f"  Tool Output ({tool_name}): {output_str}")
-                elif role == "assistant":
-                    # Keep track of the last assistant message index
-                    final_assistant_message_index = i
+                elif item.type == "message_output_item":
+                    # Access attributes specific to MessageOutputItem
+                    role = getattr(item.message, 'role', 'unknown')
+                    content = getattr(item.message, 'content', '')
+                    if role == "assistant":
+                         # You might want to print assistant messages during the turn too,
+                         # or just use the final_output at the end.
+                         # print(f"  Assistant Message: {content}")
+                         pass # We print the final consolidated output later
+                    elif role == "user":
+                         # This shouldn't typically happen in new_items unless it's complex
+                         # print(f"  User Message (in turn): {content}")
+                         pass
+                # Add more checks here if other RunItem types are expected (e.g., HandoffCallItem)
 
             print("--- End Agent Turn Details ---\n")
 
