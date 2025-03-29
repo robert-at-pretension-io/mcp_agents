@@ -245,9 +245,10 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
             # --- Print Tool Interactions ---
             print("\n--- Agent Turn Details ---")
             final_assistant_message_index = -1
-            for i, message in enumerate(result.history):
-                role = message.get("role")
-                content = message.get("content", "")
+            # Use result.new_items to access the generated items during the run
+            for i, message in enumerate(result.new_items):
+                role = message.get("role") # Note: RunItem might use 'type' instead of 'role'
+                content = message.get("content", "") # Adjust based on RunItem structure if needed
 
                 if role == "tool_call":
                     tool_name = message.get("name", "unknown_tool")
