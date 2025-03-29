@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+import logging # Add logging import
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
@@ -14,8 +15,23 @@ def validate_env_var(var_name: str) -> str:
     """Gets an environment variable or raises ValueError if missing."""
     value = os.getenv(var_name)
     if not value:
+        # Use logging before raising for better traceability if needed elsewhere
+        # logging.error(f"Missing required environment variable: {var_name}")
         raise ValueError(f"Missing required environment variable: {var_name}")
     return value
+
+# --- Logging Setup ---
+log_file = "brave_server.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        # logging.StreamHandler() # Optionally keep logging to console as well
+    ]
+)
+logging.info("--- Brave Search Server Logging Initialized ---")
+
 
 # --- Server State and Lifespan ---
 @dataclass
@@ -26,15 +42,15 @@ class AppContext:
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Initialize and cleanup the HTTP client."""
-    print("Brave Search Server Lifespan: Startup")
+    logging.info("Brave Search Server Lifespan: Startup") # Use logging
     # Standard timeout for API calls
     http_client = httpx.AsyncClient(timeout=30.0)
     try:
         yield AppContext(http_client=http_client)
     finally:
-        print("Brave Search Server Lifespan: Shutdown")
+        logging.info("Brave Search Server Lifespan: Shutdown") # Use logging
         await http_client.aclose()
-        print("Brave Search Server Shutdown Complete.")
+        logging.info("Brave Search Server Shutdown Complete.") # Use logging
 
 # MCP Server Initialization with Lifespan
 mcp = FastMCP(
@@ -67,17 +83,18 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
     - Age indicators showing content freshness
 
     The search defaults to returning 10 results but can provide up to 20 with the count parameter.
-
     NOTE: This tool requires the BRAVE_API_KEY environment variable to be set.
     """
-    print(f"\n-> brave_search called with query='{query}', count={count}") # Log Entry
+    logging.info(f"-> brave_search called with query='{query}', count={count}") # Log Entry
     app_context: AppContext = ctx.lifespan
     try:
         api_key = validate_env_var("BRAVE_API_KEY")
     except ValueError as e:
+        logging.error(f"Validation Error in brave_search: {e}") # Use logging
         return f"Error: {e}"
 
     if not query or not query.strip():
+        logging.warning("Empty search query received.") # Use logging
         return "Error: Search query cannot be empty."
 
     # Clamp count between 1 and 20 (API max)
@@ -98,15 +115,16 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
     }
 
     try:
-        print(f"   Making Brave API request: URL={base_api_url}, Params={params}") # Log API Call
+        logging.info(f"   Making Brave API request: URL={base_api_url}, Params={params}") # Log API Call
         response = await app_context.http_client.get(base_api_url, params=params, headers=headers)
-        print(f"   Brave API response status: {response.status_code}") # Log API Response Status
+        logging.info(f"   Brave API response status: {response.status_code}") # Log API Response Status
         response.raise_for_status() # Check for 4xx/5xx errors
 
         data = response.json()
         web_results = data.get("web", {}).get("results", [])
 
         if not web_results:
+            logging.warning(f"No web results found for query: '{query}'") # Use logging
             return f"No web results found for query: '{query}'"
 
         # Format results nicely
@@ -126,7 +144,7 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
             output += f"   Description: {description}\n\n"
 
         result_string = output.strip()
-        print(f"<- brave_search returning successfully (length: {len(result_string)})") # Log Success Exit
+        logging.info(f"<- brave_search returning successfully (length: {len(result_string)})") # Log Success Exit
         return result_string
 
     except httpx.HTTPStatusError as e:
@@ -138,33 +156,33 @@ async def brave_search(ctx: Context, query: str, count: Optional[int] = 10) -> s
                  error_detail = json.dumps(error_json, indent=2) # Pretty print JSON error
         except json.JSONDecodeError:
              pass # Keep original text if not JSON
-        print(f"Caught exception in brave_search: {e}") # Existing logging
+        logging.error(f"Caught HTTPStatusError in brave_search: {e}", exc_info=True) # Log exception info
         error_message = (f"Error: Brave Search API request failed with status {e.response.status_code}. "
                          f"Detail: {error_detail}")
-        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        logging.error(f"<- brave_search returning error: {error_message}") # Log Error Exit
         return error_message
     except httpx.TimeoutException as e: # Added variable e
-         print(f"Caught exception in brave_search: {e}") # Existing logging
+         logging.error(f"Caught TimeoutException in brave_search: {e}", exc_info=True) # Log exception info
          error_message = f"Error: Request to Brave Search API timed out."
-         print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+         logging.error(f"<- brave_search returning error: {error_message}") # Log Error Exit
          return error_message
     except httpx.RequestError as e:
-        print(f"Caught exception in brave_search: {e}") # Existing logging
+        logging.error(f"Caught RequestError in brave_search: {e}", exc_info=True) # Log exception info
         error_message = f"Error: Network request to Brave Search API failed: {e}"
-        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        logging.error(f"<- brave_search returning error: {error_message}") # Log Error Exit
         return error_message
     except json.JSONDecodeError as e: # Added variable e
-         print(f"Caught exception in brave_search: {e}") # Existing logging
+         logging.error(f"Caught JSONDecodeError in brave_search: {e}", exc_info=True) # Log exception info
          error_message = f"Error: Failed to parse JSON response from Brave Search API."
-         print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+         logging.error(f"<- brave_search returning error: {error_message}") # Log Error Exit
          return error_message
     except Exception as e:
-        print(f"Caught exception in brave_search: {e}") # Existing logging
+        logging.exception("An unexpected error occurred in brave_search") # Use logging.exception for full traceback
         error_message = f"An unexpected error occurred during Brave search: {e}"
-        print(f"<- brave_search returning error: {error_message}") # Log Error Exit
+        logging.error(f"<- brave_search returning error: {error_message}") # Log Error Exit
         return error_message
 
 
 if __name__ == "__main__":
-    print("Starting Brave Search MCP Server...")
+    logging.info("Starting Brave Search MCP Server...") # Use logging
     mcp.run()
