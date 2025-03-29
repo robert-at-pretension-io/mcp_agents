@@ -231,8 +231,8 @@ async def run_repl(orchestrator: Agent, run_config: RunConfig):
             # Use trace context for better observability (optional but recommended)
             with trace(
                 workflow_name="AgentREPL",
-                group_id=run_config.trace_metadata.get("session_id", "default_session"), # Example group_id
-                trace_metadata=run_config.trace_metadata,
+                group_id=run_config.trace_metadata.get("session_id", "default_session") # Example group_id
+                # trace_metadata is handled via RunConfig passed to Runner.run
              ):
                 result = await Runner.run(
                     orchestrator,
