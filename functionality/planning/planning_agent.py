@@ -1,38 +1,7 @@
-from typing import List, Dict, Optional
-from pydantic import BaseModel, Field
+
 
 from agents import Agent, RunContextWrapper
 from functionality.planning.planning_context import PlanningContext
-
-# Define structured models for the planning agent
-class ToolParameter(BaseModel):
-    """Parameter for a tool call"""
-    name: str = Field(description="Name of the parameter")
-    value: str = Field(description="Value of the parameter")
-    description: Optional[str] = Field(None, description="Description of what this parameter does")
-
-class PlanStep(BaseModel):
-    """A step in the execution plan"""
-    agent_name: str = Field(description="Name of the agent to use")
-    tool_name: Optional[str] = Field(None, description="Name of the tool to call")
-    parameters: List[ToolParameter] = Field(default_factory=list, description="Parameters for the tool call")
-    description: str = Field(description="What this step accomplishes")
-    expected_output: str = Field(description="What output is expected from this step")
-    required_capabilities: List[str] = Field(default_factory=list, description="Tags/capabilities needed for this step")
-
-class Contingency(BaseModel):
-    """A contingency plan for potential failures"""
-    condition: str = Field(description="Condition that triggers this contingency")
-    steps: List[PlanStep] = Field(description="Steps to take in this contingency")
-    description: str = Field(description="Description of this contingency plan")
-
-# Define the main output structure for the planning agent
-class ExecutionPlan(BaseModel):
-    """A proposed execution plan using available tools and agents"""
-    goal: str = Field(description="The overall goal of this plan")
-    steps: List[PlanStep] = Field(description="Sequence of tool/agent calls to make")
-    contingencies: List[Contingency] = Field(default_factory=list, description="Plans for handling potential failures")
-    rationale: str = Field(description="Reasoning behind this plan")
 
 # Define dynamic instructions function
 def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent) -> str:
@@ -98,7 +67,7 @@ def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent)
         permissions = "read, write"
     
     # Return full instructions with agent and tool information
-    return f"""You are a Planning Agent that creates detailed execution plans using available tools and agents.
+    return f"""You are a Planning Agent that creates practical execution plans using available tools and agents.
 
 # Available Agents and Their Tools
 {all_agents_info}
@@ -106,54 +75,43 @@ def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent)
 # Your Task
 Your job is to:
 1. Analyze the user's request carefully
-2. Break down the request into a sequence of steps
-3. For each step, identify the most appropriate agent and tool to use
-4. Create a comprehensive execution plan that achieves the user's goal
-5. Include contingency plans for potential failures
+2. Create a clear, step-by-step plan using ONLY the tools and agents listed above
+3. Be specific about which agent and tool to use for each step
+4. Include any important considerations or potential issues
 
 # Important Guidelines
-- Be thorough in your planning
-- Consider dependencies between steps
-- Optimize for efficiency and reliability
-- Provide clear rationale for your choices
-- Consider the appropriate order of operations
+- ONLY recommend tools and agents that are explicitly listed above
+- DO NOT invent or assume the existence of tools that aren't listed
+- Be realistic about what each tool can accomplish
+- When uncertain, be conservative in your recommendations
+- When there isn't enough context you must make the plan simply to ask clarifying questions
+- Format your plan as a clear, readable text in markdown format
 
-# Output Structure
-Your response must be structured as an ExecutionPlan with:
-- goal: A clear statement of what the plan aims to achieve
-- steps: A list of PlanStep objects, each containing:
-  - agent_name: The name of the agent to use (e.g., "shell", "search")
-  - tool_name: The specific tool to use (if applicable)
-  - parameters: A list of ToolParameter objects with:
-    - name: Parameter name
-    - value: Parameter value
-    - description: What this parameter does
-  - description: What this step accomplishes
-  - expected_output: What output is expected from this step
-  - required_capabilities: List of capability tags needed for this step (e.g., ["search", "execution"])
-- contingencies: A list of Contingency objects for handling failures, each containing:
-  - condition: When this contingency should be triggered
-  - steps: Alternative steps to take (same structure as main steps)
-  - description: What this contingency addresses
-- rationale: Your reasoning for the plan structure
+# Example Format
+Your response should look like this:
 
-# Using Tags
-Pay special attention to the tags associated with each agent (shown in [brackets]). 
-When creating your plan:
-1. Choose agents with tags that match the capabilities needed for each step
-2. Specify the required_capabilities for each step explicitly
-3. Look for agents with complementary tags that can work together effectively
+## Execution Plan
+**Goal**: [Describe the goal]
+
+**Steps**:
+1. Use agent `A` with tool `B` to do X
+2. Use agent `C` to D about Y
+3. Use agent `E` to F from Z
+(replace those with tools/agents)
+
+**Considerations**:
+- Important factor 1
+- Potential issue 2
 
 User permissions: {permissions}
 Session ID: {ctx.context.session_id}
 
-Important: Return your response as a structured ExecutionPlan object, not as freeform text.
 """
 
 # Create the planning agent with dynamic instructions
 planning_agent = Agent[PlanningContext](
     name="Planning Agent",
     instructions=planning_instructions,
-    model="gpt-4o",
-    output_type=ExecutionPlan
+    model="gpt-4o"
+    # No output_type specified, which defaults to str
 )
