@@ -58,8 +58,12 @@ def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent)
         
         agent_descriptions.append(agent_desc)
     
-    # Join all agent descriptions
-    all_agents_info = "\n".join(agent_descriptions) if agent_descriptions else "No agents available"
+    # Join all agent descriptions with a warning if no agents are available
+    if agent_descriptions:
+        all_agents_info = "\n".join(agent_descriptions)
+    else:
+        all_agents_info = "WARNING: No agents or tools are currently available. " \
+                         "Your plan should focus on gathering more information or asking clarifying questions."
     
     # Get permissions
     try:

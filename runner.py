@@ -471,6 +471,15 @@ class AgentRunner(Generic[T]):
             if context is not None and hasattr(context, "update_registry_info"):
                 try:
                     registry_info = self.registry.get_registry_info()
+                    # Log information about the registry info
+                    agent_count = len(registry_info)
+                    tool_counts = {name: len(info.get('tools', [])) for name, info in registry_info.items()}
+                    logging.info(f"Registry info has {agent_count} agents with tool counts: {tool_counts}")
+                        
+                    # Check if there are no tools available
+                    if all(len(info.get('tools', [])) == 0 for info in registry_info.values()):
+                        logging.warning("No tools found in the registry for the planning agent to use")
+                        
                     # Call the update_registry_info method on the context object
                     context.update_registry_info(registry_info)
                     logging.info(f"Updated planning context registry info with {len(registry_info)} agents")
