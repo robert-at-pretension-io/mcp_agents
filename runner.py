@@ -197,6 +197,64 @@ class AgentRegistry:
             List of agent descriptions
         """
         return [f"- {entry.name}: {entry.description}" for entry in self.agents.values()]
+        
+    def get_registry_info(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get structured information about all registered agents and their tools.
+        
+        This is used by the planning agent to understand available capabilities.
+        
+        Returns:
+            Dictionary mapping agent names to their metadata including tools
+        """
+        registry_info = {}
+        
+        for name, entry in self.agents.items():
+            agent_info = {
+                "description": entry.description,
+                "tools": []
+            }
+            
+            # Extract tool information if available
+            if hasattr(entry.agent, 'tools') and entry.agent.tools:
+                for tool in entry.agent.tools:
+                    # Get basic tool info
+                    tool_name = getattr(tool, 'name', None)
+                    
+                    # Skip tools without names
+                    if not tool_name:
+                        continue
+                        
+                    # Get tool description
+                    tool_description = getattr(tool, 'description', 'No description available')
+                    
+                    # Get parameter schema if available
+                    parameters = []
+                    if hasattr(tool, 'params_json_schema'):
+                        schema = tool.params_json_schema
+                        if isinstance(schema, dict) and 'properties' in schema:
+                            for param_name, param_info in schema['properties'].items():
+                                param_type = param_info.get('type', 'unknown')
+                                param_desc = param_info.get('description', f'Parameter of type {param_type}')
+                                parameters.append({
+                                    "name": param_name,
+                                    "type": param_type,
+                                    "description": param_desc,
+                                    "required": param_name in schema.get('required', [])
+                                })
+                                
+                    # Create complete tool info
+                    tool_info = {
+                        "name": tool_name,
+                        "description": tool_description,
+                        "parameters": parameters
+                    }
+                    
+                    agent_info["tools"].append(tool_info)
+            
+            registry_info[name] = agent_info
+            
+        return registry_info
 
 
 def create_orchestrator_agent(registry: AgentRegistry) -> Agent[OrchestratorContext]:
@@ -238,6 +296,7 @@ Your job is to:
 3. Route the query to that agent using the appropriate handoff
 
 When deciding which agent to use, consider the descriptions above.
+For complex tasks that might need multiple steps or tools, consider using the planner agent to create a detailed execution plan.
 If you're unsure which agent to use, ask the user for clarification.
 
 When you hand off to another agent, briefly explain why you're doing so.
@@ -314,6 +373,11 @@ class AgentRunner(Generic[T]):
         # Get agent and context
         entry = self.registry.get_agent(agent_name)
         context = self._get_context(agent_name)
+        
+        # If this is the planning agent, update its context with registry info
+        if agent_name == "planner" and hasattr(context, "update_registry_info"):
+            registry_info = self.registry.get_registry_info()
+            context.update_registry_info(registry_info)
         
         # Create the input for this turn
         if self.last_result:
@@ -405,6 +469,7 @@ class AgentRunner(Generic[T]):
         print("Agent Orchestration System")
         print(f"Available agents: {', '.join(self.registry.agents.keys())}, or let the orchestrator decide")
         print("Type '@agent_name query' to use a specific agent")
+        print("Type '@planner query' to create an execution plan using available tools and agents")
         print("Type 'exit' to quit\n")
         
         while True:
@@ -451,6 +516,8 @@ def main():
     # Import agents - must be done here to avoid circular imports
     from functionality.search.web_search_agent import web_search_agent
     from functionality.shell.shell_agent import advanced_shell_agent, ShellContext
+    from functionality.planning.planning_agent import planning_agent
+    from functionality.planning.planning_context import PlanningContext
     
     # Create agent registry
     registry = AgentRegistry()
@@ -468,6 +535,14 @@ def main():
         agent=web_search_agent,
         description="Finds information on the internet using web search",
         context_factory=None  # No special context needed
+    )
+    
+    # Register planning agent
+    registry.register(
+        name="planner",
+        agent=planning_agent,
+        description="Creates execution plans using available tools and agents",
+        context_factory=lambda: PlanningContext()
     )
     
     # Create agent runner with the registry
