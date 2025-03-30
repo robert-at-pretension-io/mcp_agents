@@ -3,20 +3,6 @@
 from agents import Agent, RunContextWrapper, function_tool
 from functionality.planning.planning_context import PlanningContext
 
-# Define a dummy planning tool to ensure the agent has tools for the registry
-@function_tool
-def planning_dummy_tool(query: str) -> str:
-    """
-    A tool for planning purposes. This tool doesn't actually do anything
-    but ensures the planning agent has at least one tool for the registry.
-    
-    Args:
-        query: A query to consider for planning
-        
-    Returns:
-        A confirmation message
-    """
-    return f"Planning request received: {query}"
 
 # Define dynamic instructions function
 def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent) -> str:
@@ -128,5 +114,5 @@ planning_agent = Agent[PlanningContext](
     name="Planning Agent",
     instructions=planning_instructions,
     model="gpt-4o",
-    tools=[planning_dummy_tool]  # Add the dummy tool here
+    tools=[]  # Add the dummy tool here
 )

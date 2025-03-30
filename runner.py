@@ -349,8 +349,8 @@ def create_orchestrator_agent(registry: AgentRegistry) -> Agent[OrchestratorCont
     Returns:
         An orchestrator agent configured for routing
     """
-    # Create handoffs to all registered agents using the OpenAI Agents SDK
-    handoffs_list = [handoff(entry.agent) for entry in registry.get_all_agents()]
+    # Create handoffs to all registered agents using the OpenAI Agents SDK -- this should NOT be used when the orchestrator is "in charge". Otherwise, other agents can pre-maturely end the conversation
+    # handoffs_list = [handoff(entry.agent) for entry in registry.get_all_agents()]
     
     # Create dynamic instructions function that includes conversation history and tag-based capabilities
     def dynamic_instructions(ctx: RunContextWrapper[OrchestratorContext], agent: Agent) -> str:
@@ -378,8 +378,6 @@ Your primary directive:
 3. Chain tools together - use the output of one tool as input to another
 4. Prioritize efficiency by using the minimal sufficient set of tools to solve the problem completely
 
-IMPORTANT: For complex tasks, STRONGLY CONSIDER using the 'planner' agent FIRST to create an execution plan before proceeding with other tools. The planner will help you identify the optimal sequence of operations.
-
 Remember that complex problems are rarely solved with a single tool. Look for opportunities to:
 - Use the planner to create structured execution plans for multi-step tasks
 - Combine data retrieval with data processing
@@ -399,11 +397,14 @@ Maintain continuity in the conversation by referencing previous interactions whe
     # Create the orchestrator agent with dynamic instructions and handoffs
     instructions_with_handoff = prompt_with_handoff_instructions(dynamic_instructions)
     
+    model_settings = ModelSettings(tool_choice='use_planner')
+
     orchestrator = Agent[OrchestratorContext](
         name="Orchestrator",
         instructions=instructions_with_handoff,
         model="gpt-4o",
-        handoffs=handoffs_list
+        # handoffs=handoffs_list, # Don't use because we already gave the orchestrator all the agents as tools.
+        model_settings=model_settings
     )
     
     return orchestrator
@@ -429,8 +430,13 @@ class AgentRunner(Generic[T]):
         if agent_name not in self.context_map:
             entry = self.registry.get_agent(agent_name)
             if entry.context_factory:
+                # Create a new context using the factory function
                 self.context_map[agent_name] = entry.context_factory()
+            else:
+                # No context factory, return None
+                return None
         
+        # Return the cached context
         return self.context_map.get(agent_name)
     
     def _prepare_input_from_memory(self) -> List[Dict[str, Any]]:
@@ -461,9 +467,17 @@ class AgentRunner(Generic[T]):
         context = self._get_context(agent_name)
         
         # If this is the planning agent, update its context with registry info
-        if agent_name == "planner" and hasattr(context, "update_registry_info"):
-            registry_info = self.registry.get_registry_info()
-            context.update_registry_info(registry_info)
+        if agent_name == "planner":
+            if context is not None and hasattr(context, "update_registry_info"):
+                try:
+                    registry_info = self.registry.get_registry_info()
+                    # Call the update_registry_info method on the context object
+                    context.update_registry_info(registry_info)
+                    logging.info(f"Updated planning context registry info with {len(registry_info)} agents")
+                except Exception as e:
+                    logging.error(f"Failed to update registry info: {e}")
+            else:
+                logging.warning("Planning agent context is None or doesn't have update_registry_info method")
         
         # Create the input for this turn
         if self.last_result:
@@ -500,58 +514,6 @@ class AgentRunner(Generic[T]):
         
         return response
     
-    async def _is_complex_query(self, query: str) -> bool:
-        """
-        Determine if a query is complex and would benefit from planning.
-        
-        Complex queries typically:
-        - Contain multiple distinct tasks or steps
-        - Require coordination between different capabilities
-        - Involve conditional logic or complex workflows
-        - Need structured execution planning
-        
-        Args:
-            query: The user query to analyze
-            
-        Returns:
-            True if query is complex and would benefit from planning, False otherwise
-        """
-        # Keywords suggesting complexity
-        complexity_signals = [
-            "steps", "workflow", "sequence", "procedure", "process", 
-            "multiple", "several", "various", "different", "series",
-            "first", "then", "finally", "after", "before", "following",
-            "plan", "coordinate", "organize", "arrange", "automate",
-            "build", "create", "develop", "implement", "set up",
-            "complex", "complicated", "sophisticated", "advanced",
-            "analyze and", "research and", "find and then", "search and then",
-            "if", "when", "unless", "depending on", "based on the results"
-        ]
-        
-        # Check for presence of complexity signals
-        query_lower = query.lower()
-        signal_count = sum(1 for signal in complexity_signals if signal in query_lower)
-        
-        # Basic heuristic: if 2+ complexity signals are found, it's likely complex
-        # This threshold can be adjusted based on observed performance
-        if signal_count >= 2:
-            return True
-            
-        # Check for multiple distinct task indicators (potential step sequences)
-        task_separators = ["and", "then", "next", "after", "finally", "lastly", "before"]
-        task_separator_count = sum(1 for sep in task_separators if f" {sep} " in f" {query_lower} ")
-        
-        # If there are multiple task separators, likely complex
-        if task_separator_count >= 2:
-            return True
-            
-        # Check for length as a weak signal (complex queries tend to be longer)
-        # Only consider as a supporting factor, not a primary one
-        if len(query.split()) > 25 and (signal_count > 0 or task_separator_count > 0):
-            return True
-            
-        return False
-
     async def run_orchestrator(self, query: str) -> str:
         """
         Run the orchestrator agent with a query.
@@ -567,64 +529,16 @@ class AgentRunner(Generic[T]):
         """
         # Record user message in conversation memory
         self.orchestrator_context.memory.add_user_message(query)
-        
-        # Check if query is complex and would benefit from planning
-        is_complex = await self._is_complex_query(query)
-        
-        # If complex, route through planner first
-        if is_complex:
-            try:
-                # Call planner agent first to create a plan
-                planner_query = f"Create an execution plan for this task: {query}"
-                plan = await self.run_agent("planner", planner_query)
-                
-                # Modify the query to include the plan for the orchestrator
-                enhanced_query = (
-                    f"I need help with this task: {query}\n\n"
-                    f"Here's a plan that was created to approach this:\n{plan}\n\n"
-                    f"Please execute this plan using the most appropriate tools for each step."
-                )
-                
-                # Create the input for this turn (with the enhanced query)
-                if self.last_result:
-                    # Use the previous result to maintain conversation history
-                    # But replace the last user query with our enhanced one
-                    input_data = self.last_result.to_input_list()[:-1] + [
-                        {"role": "user", "content": enhanced_query}
-                    ]
-                else:
-                    # First turn, use conversation memory
-                    input_data = self._prepare_input_from_memory()
-                    # Replace the last query or add if not present
-                    if input_data and input_data[-1]["role"] == "user":
-                        input_data[-1]["content"] = enhanced_query
-                    else:
-                        input_data.append({"role": "user", "content": enhanced_query})
-            except Exception as e:
-                # If planning fails, fall back to regular orchestration
-                logging.warning(f"Planning failed, falling back to regular orchestration: {e}")
-                # Use original query unchanged
-                enhanced_query = query
-                
-                # Create the input for this turn (with original query)
-                if self.last_result:
-                    input_data = self.last_result.to_input_list() + [
-                        {"role": "user", "content": query}
-                    ]
-                else:
-                    input_data = self._prepare_input_from_memory()
-                    if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
-                        input_data.append({"role": "user", "content": query})
+    
+        # For simple queries, use regular orchestration without planning
+        if self.last_result:
+            input_data = self.last_result.to_input_list() + [
+                {"role": "user", "content": query}
+            ]
         else:
-            # For simple queries, use regular orchestration without planning
-            if self.last_result:
-                input_data = self.last_result.to_input_list() + [
-                    {"role": "user", "content": query}
-                ]
-            else:
-                input_data = self._prepare_input_from_memory()
-                if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
-                    input_data.append({"role": "user", "content": query})
+            input_data = self._prepare_input_from_memory()
+            if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
+                input_data.append({"role": "user", "content": query})
         
         # Use the OpenAI Agents SDK's tracing with consistent group_id
         with trace(
