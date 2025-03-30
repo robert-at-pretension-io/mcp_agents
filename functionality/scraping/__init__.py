@@ -1,4 +1,4 @@
-# Planning module initialization
+# Scraping module initialization
 import logging
 
 # Set up logger

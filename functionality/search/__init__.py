@@ -1,4 +1,4 @@
-# Planning module initialization
+# Search module initialization
 import logging
 
 # Set up logger

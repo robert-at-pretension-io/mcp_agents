@@ -18,6 +18,7 @@ class PlanStep(BaseModel):
     parameters: List[ToolParameter] = Field(default_factory=list, description="Parameters for the tool call")
     description: str = Field(description="What this step accomplishes")
     expected_output: str = Field(description="What output is expected from this step")
+    required_capabilities: List[str] = Field(default_factory=list, description="Tags/capabilities needed for this step")
 
 class Contingency(BaseModel):
     """A contingency plan for potential failures"""
@@ -50,8 +51,12 @@ def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent)
         if agent_name == "planner":
             continue
             
+        # Get tags for this agent
+        tags = agent_info.get('tags', [])
+        tag_text = f"[{', '.join(tags)}]" if tags else ""
+            
         agent_desc = f"""
-## {agent_name}
+## {agent_name} {tag_text}
 {agent_info.get('description', 'No description available')}
 
 ### Tools:
@@ -125,11 +130,19 @@ Your response must be structured as an ExecutionPlan with:
     - description: What this parameter does
   - description: What this step accomplishes
   - expected_output: What output is expected from this step
+  - required_capabilities: List of capability tags needed for this step (e.g., ["search", "execution"])
 - contingencies: A list of Contingency objects for handling failures, each containing:
   - condition: When this contingency should be triggered
   - steps: Alternative steps to take (same structure as main steps)
   - description: What this contingency addresses
 - rationale: Your reasoning for the plan structure
+
+# Using Tags
+Pay special attention to the tags associated with each agent (shown in [brackets]). 
+When creating your plan:
+1. Choose agents with tags that match the capabilities needed for each step
+2. Specify the required_capabilities for each step explicitly
+3. Look for agents with complementary tags that can work together effectively
 
 User permissions: {permissions}
 Session ID: {ctx.context.session_id}

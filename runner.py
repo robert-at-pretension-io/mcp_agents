@@ -3,6 +3,14 @@ import asyncio
 from dataclasses import dataclass, field
 import uuid
 import os
+import logging
+
+# Configure logging to reduce httpx logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Optional: Disable OpenAI Agents SDK tracing
+# from agents.tracing import set_tracing_disabled
+# set_tracing_disabled(True)
 
 from agents import (
     Agent, Runner as OpenAIRunner, trace, 
@@ -122,11 +130,12 @@ class OrchestratorContext(BaseAgentContext):
 @dataclass
 class AgentRegistryEntry:
     """
-    Represents an agent entry in the registry with routing criteria
+    Represents an agent entry in the registry with routing criteria and tags
     """
     name: str
     agent: Agent
     description: str
+    tags: List[str] = field(default_factory=list)
     context_factory: Optional[Callable[[], Any]] = None
 
 
@@ -142,6 +151,7 @@ class AgentRegistry:
         name: str,
         agent: Agent,
         description: str,
+        tags: List[str] = None,
         context_factory: Optional[Callable[[], Any]] = None
     ) -> None:
         """
@@ -151,15 +161,20 @@ class AgentRegistry:
             name: Unique identifier for the agent
             agent: The agent instance
             description: Description of when to use this agent
+            tags: List of capability tags for this agent (e.g., ["search", "data", "execution"])
             context_factory: Optional function to create a context object for this agent
         """
         if name in self.agents:
             raise ValueError(f"Agent with name '{name}' already registered")
         
+        # Use empty list if tags is None
+        tags = tags or []
+        
         self.agents[name] = AgentRegistryEntry(
             name=name,
             agent=agent,
             description=description,
+            tags=tags,
             context_factory=context_factory
         )
     
@@ -188,6 +203,35 @@ class AgentRegistry:
             List of all registered agent entries
         """
         return list(self.agents.values())
+        
+    def find_agents_by_tags(self, tags: List[str], match_all: bool = False) -> List[AgentRegistryEntry]:
+        """
+        Find agents that match the specified tags.
+        
+        Args:
+            tags: List of tags to match
+            match_all: If True, agents must have all specified tags; if False, agents must have at least one
+            
+        Returns:
+            List of agent entries that match the tag criteria
+        """
+        if not tags:
+            return []
+            
+        results = []
+        
+        for entry in self.agents.values():
+            # Check if entry has any of the requested tags
+            if match_all:
+                # All specified tags must be present
+                if all(tag in entry.tags for tag in tags):
+                    results.append(entry)
+            else:
+                # At least one tag must be present
+                if any(tag in entry.tags for tag in tags):
+                    results.append(entry)
+                    
+        return results
     
     def get_routing_descriptions(self) -> List[str]:
         """
@@ -197,6 +241,43 @@ class AgentRegistry:
             List of agent descriptions
         """
         return [f"- {entry.name}: {entry.description}" for entry in self.agents.values()]
+        
+    def get_tag_summary(self) -> str:
+        """
+        Generate a summary of capabilities organized by tags.
+        
+        Returns:
+            Formatted string of capabilities grouped by tags
+        """
+        # Create a mapping of tags to agents
+        tag_to_agents = {}
+        
+        for entry in self.agents.values():
+            for tag in entry.tags:
+                if tag not in tag_to_agents:
+                    tag_to_agents[tag] = []
+                tag_to_agents[tag].append({
+                    "name": entry.name,
+                    "description": entry.description
+                })
+        
+        # Generate the summary
+        if not tag_to_agents:
+            return "No tagged capabilities available."
+            
+        summary_parts = []
+        
+        # Sort tags alphabetically for consistent output
+        for tag in sorted(tag_to_agents.keys()):
+            agents = tag_to_agents[tag]
+            summary_parts.append(f"## {tag.upper()} CAPABILITIES:")
+            
+            for agent_info in agents:
+                summary_parts.append(f"- {agent_info['name']}: {agent_info['description']}")
+                
+            summary_parts.append("")  # Empty line between tags
+        
+        return "\n".join(summary_parts)
         
     def get_registry_info(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -212,6 +293,7 @@ class AgentRegistry:
         for name, entry in self.agents.items():
             agent_info = {
                 "description": entry.description,
+                "tags": entry.tags,
                 "tools": []
             }
             
@@ -270,13 +352,13 @@ def create_orchestrator_agent(registry: AgentRegistry) -> Agent[OrchestratorCont
     # Create handoffs to all registered agents using the OpenAI Agents SDK
     handoffs_list = [handoff(entry.agent) for entry in registry.get_all_agents()]
     
-    # Generate routing descriptions
-    routing_text = "\n".join(registry.get_routing_descriptions())
-    
-    # Create dynamic instructions function that includes conversation history
+    # Create dynamic instructions function that includes conversation history and tag-based capabilities
     def dynamic_instructions(ctx: RunContextWrapper[OrchestratorContext], agent: Agent) -> str:
         # Get formatted conversation history
         history = ctx.context.memory.get_formatted_history(10)
+        
+        # Get tag-based capability summary
+        tag_summary = registry.get_tag_summary()
         
         # Get permissions
         try:
@@ -284,22 +366,24 @@ def create_orchestrator_agent(registry: AgentRegistry) -> Agent[OrchestratorCont
         except Exception:
             permissions = "read, write, execute"
         
-        # Build instructions with conversation history
-        instructions = f"""You are an Orchestrator Agent that helps users by routing their requests to specialized agents.
+        # Build instructions with conversation history and tag-based capabilities
+        instructions = f"""You are an Orchestrator Agent that maximizes value through strategic multi-tool utilization.
 
-You have access to these specialized agents:
-{routing_text}
+You have access to a wide range of specialized tools and agents with these capabilities:
+{tag_summary}
 
-Your job is to:
-1. Analyze each user query
-2. Determine which specialized agent is best suited to handle it
-3. Route the query to that agent using the appropriate handoff
+Your primary directive:
+1. Analyze each user query thoroughly to identify ALL required capabilities
+2. For complex requests, ALWAYS use MULTIPLE relevant tools in a SINGLE response
+3. Chain tools together - use the output of one tool as input to another
+4. Prioritize efficiency by using the minimal sufficient set of tools to solve the problem completely
 
-When deciding which agent to use, consider the descriptions above.
-For complex tasks that might need multiple steps or tools, consider using the planner agent to create a detailed execution plan.
-If you're unsure which agent to use, ask the user for clarification.
+IMPORTANT: Do not limit yourself to just one tool per response. Effective orchestration means combining complementary capabilities within the same turn.
 
-When you hand off to another agent, briefly explain why you're doing so.
+Remember that complex problems are rarely solved with a single tool. Look for opportunities to:
+- Combine data retrieval with data processing
+- Pair knowledge discovery with execution capabilities
+- Use planning capabilities followed by immediate execution steps
 
 User permissions: {permissions}
 Session ID: {ctx.context.session_id}
@@ -466,11 +550,25 @@ class AgentRunner(Generic[T]):
         """
         Run an interactive session with the agent orchestration system.
         """
-        print("Agent Orchestration System")
+        print("Agent Orchestration System with Tag-Based Capabilities")
         print(f"Available agents: {', '.join(self.registry.agents.keys())}, or let the orchestrator decide")
-        print("Type '@agent_name query' to use a specific agent")
-        print("Type '@planner query' to create an execution plan using available tools and agents")
-        print("Type 'exit' to quit\n")
+        print("\nCapability Tags:")
+        
+        # Create a set of all unique tags
+        all_tags = set()
+        for entry in self.registry.agents.values():
+            all_tags.update(entry.tags)
+            
+        # Display tags grouped by agent
+        for name, entry in self.registry.agents.items():
+            if entry.tags:
+                print(f"  - {name}: [{', '.join(entry.tags)}]")
+        
+        print("\nUsage:")
+        print("  Type '@agent_name query' to use a specific agent")
+        print("  Type '@planner query' to create a multi-step execution plan")
+        print("  Or simply type your query to let the orchestrator select the best tools")
+        print("  Type 'exit' to quit\n")
         
         while True:
             # Get user input
@@ -511,6 +609,15 @@ def main():
     """
     Main entry point for the runner script.
     """
+    # Set up logging configuration
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()
+        ]
+    )
+    
     print("Starting OpenAI Agents Orchestration System")
     
     # Import agents - must be done here to avoid circular imports
@@ -518,15 +625,17 @@ def main():
     from functionality.shell.shell_agent import advanced_shell_agent, ShellContext
     from functionality.planning.planning_agent import planning_agent
     from functionality.planning.planning_context import PlanningContext
+    from functionality.scraping.scraping_agent import scraping_agent
     
     # Create agent registry
     registry = AgentRegistry()
     
-    # Register agents
+    # Register agents with tags
     registry.register(
         name="shell",
         agent=advanced_shell_agent,
         description="Executes bash commands and helps with system operations",
+        tags=["execution", "system", "files", "commands"],
         context_factory=lambda: ShellContext()
     )
     
@@ -534,6 +643,7 @@ def main():
         name="search",
         agent=web_search_agent,
         description="Finds information on the internet using web search",
+        tags=["search", "web", "knowledge", "information"],
         context_factory=None  # No special context needed
     )
     
@@ -542,7 +652,17 @@ def main():
         name="planner",
         agent=planning_agent,
         description="Creates execution plans using available tools and agents",
+        tags=["planning", "orchestration", "strategy", "coordination"],
         context_factory=lambda: PlanningContext()
+    )
+    
+    # Register scraping agent
+    registry.register(
+        name="scraper",
+        agent=scraping_agent,
+        description="Extracts and processes content from websites",
+        tags=["web", "information", "extraction", "research", "content", "scraping"],
+        context_factory=None  # No special context needed
     )
     
     # Create agent runner with the registry
