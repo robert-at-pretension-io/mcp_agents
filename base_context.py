@@ -54,6 +54,30 @@ class BaseAgentContext:
     def working_directory(self) -> str:
         """Property accessor for working_directory attribute, with fallback"""
         return self.get_attribute("working_directory", os.getcwd())
+        
+    def debug_log_attributes(self) -> Dict[str, Any]:
+        """
+        Log all attributes for debugging purposes.
+        
+        Returns:
+            Dictionary of all attributes in the context
+        """
+        import logging
+        
+        # Get all attributes
+        all_attrs = {
+            "session_id": self.session_id,
+            "attributes": self.attributes,
+            # Add other important properties
+            "user_id": self.user_id,
+            "working_directory": self.working_directory,
+            "permissions": self.get_permissions()
+        }
+        
+        # Log them
+        logging.info(f"Context attributes: {all_attrs}")
+        
+        return all_attrs
 
     @staticmethod
     def from_run_context(ctx: RunContextWrapper) -> 'BaseAgentContext':

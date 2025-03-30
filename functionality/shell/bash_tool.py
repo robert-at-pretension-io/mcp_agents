@@ -1,12 +1,20 @@
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 import subprocess
 import os
 from pathlib import Path
 
 from agents import function_tool, RunContextWrapper
 
+# Import here to avoid the circular import
+from base_context import BaseAgentContext
+
+# Create a concrete type for ShellContext that we can use within the tool function
+class ShellContext(BaseAgentContext):
+    """A temporary ShellContext stub class for type checking"""
+    pass
+
 @function_tool
-async def bash_tool(ctx: RunContextWrapper[Any], command: str, cwd: Optional[str] = None) -> Dict[str, Any]:
+async def bash_tool(ctx: RunContextWrapper[ShellContext], command: str, cwd: Optional[str] = None) -> Dict[str, any]:
     """Executes bash shell commands on the host system.
 
     Use this tool to:

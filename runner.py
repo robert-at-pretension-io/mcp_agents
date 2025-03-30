@@ -117,6 +117,19 @@ class OrchestratorContext(BaseAgentContext):
         if "working_directory" not in self.attributes:
             import os
             self.set_attribute("working_directory", os.getcwd())
+            
+        # Initialize agent_registry in attributes for planning tools
+        self.set_attribute("agent_registry", {})
+    
+    @property
+    def agent_registry(self) -> Dict[str, Any]:
+        """Get the agent registry from attributes"""
+        return self.get_attribute("agent_registry", {})
+    
+    @agent_registry.setter
+    def agent_registry(self, value: Dict[str, Any]) -> None:
+        """Set the agent registry in attributes"""
+        self.set_attribute("agent_registry", value)
     
     def get_permissions(self) -> List[str]:
         """
@@ -297,42 +310,47 @@ class AgentRegistry:
                 "tools": []
             }
             
-            # Extract tool information if available
+            # Extract tool information directly from tools attribute
             if hasattr(entry.agent, 'tools') and entry.agent.tools:
                 for tool in entry.agent.tools:
-                    # Get basic tool info
+                    # Get basic tool info with simple attribute access
                     tool_name = getattr(tool, 'name', None)
+                    if not tool_name and hasattr(tool, '__wrapped__'):
+                        tool_name = getattr(tool.__wrapped__, '__name__', None)
                     
-                    # Skip tools without names
+                    # If we still don't have a name, generate one
                     if not tool_name:
-                        continue
+                        tool_name = f"tool_{name}_{id(tool) % 10000}"
                         
-                    # Get tool description
+                    # Get the description - direct attribute or function docstring
                     tool_description = getattr(tool, 'description', 'No description available')
+                    if tool_description == 'No description available' and hasattr(tool, '__doc__') and tool.__doc__:
+                        tool_description = tool.__doc__.strip()
+                        
+                    # Create simplified tool info
+                    tool_info = {
+                        "name": tool_name,
+                        "description": tool_description,
+                        "parameters": []  # Simplified parameter info
+                    }
                     
-                    # Get parameter schema if available
-                    parameters = []
+                    # Only handle parameters if there's a schema
                     if hasattr(tool, 'params_json_schema'):
                         schema = tool.params_json_schema
                         if isinstance(schema, dict) and 'properties' in schema:
                             for param_name, param_info in schema['properties'].items():
                                 param_type = param_info.get('type', 'unknown')
                                 param_desc = param_info.get('description', f'Parameter of type {param_type}')
-                                parameters.append({
+                                tool_info["parameters"].append({
                                     "name": param_name,
                                     "type": param_type,
                                     "description": param_desc,
                                     "required": param_name in schema.get('required', [])
                                 })
-                                
-                    # Create complete tool info
-                    tool_info = {
-                        "name": tool_name,
-                        "description": tool_description,
-                        "parameters": parameters
-                    }
                     
                     agent_info["tools"].append(tool_info)
+                    
+                logging.info(f"Agent {name}: Found {len(agent_info['tools'])} tools out of {len(entry.agent.tools)} total")
             
             registry_info[name] = agent_info
             
@@ -404,7 +422,9 @@ Maintain continuity in the conversation by referencing previous interactions whe
         instructions=instructions_with_handoff,
         model="gpt-4o",
         # handoffs=handoffs_list, # Don't use because we already gave the orchestrator all the agents as tools.
-        model_settings=model_settings
+        model_settings=model_settings,
+        # Explicitly set reset_tool_choice to True to prevent infinite loops
+        reset_tool_choice=True
     )
     
     return orchestrator
@@ -467,26 +487,18 @@ class AgentRunner(Generic[T]):
         context = self._get_context(agent_name)
         
         # If this is the planning agent, update its context with registry info
-        if agent_name == "planner":
-            if context is not None and hasattr(context, "update_registry_info"):
-                try:
-                    registry_info = self.registry.get_registry_info()
-                    # Log information about the registry info
-                    agent_count = len(registry_info)
-                    tool_counts = {name: len(info.get('tools', [])) for name, info in registry_info.items()}
-                    logging.info(f"Registry info has {agent_count} agents with tool counts: {tool_counts}")
-                        
-                    # Check if there are no tools available
-                    if all(len(info.get('tools', [])) == 0 for info in registry_info.values()):
-                        logging.warning("No tools found in the registry for the planning agent to use")
-                        
-                    # Call the update_registry_info method on the context object
-                    context.update_registry_info(registry_info)
-                    logging.info(f"Updated planning context registry info with {len(registry_info)} agents")
-                except Exception as e:
-                    logging.error(f"Failed to update registry info: {e}")
-            else:
-                logging.warning("Planning agent context is None or doesn't have update_registry_info method")
+        if agent_name == "planner" and context is not None and hasattr(context, "update_registry_info"):
+            try:
+                # Get registry info and update the context
+                registry_info = self.registry.get_registry_info()
+                context.update_registry_info(registry_info)
+                
+                # Simple summary log
+                agent_count = len(registry_info)
+                tool_count = sum(len(info.get('tools', [])) for info in registry_info.values())
+                logging.info(f"Updated planning context with {agent_count} agents and {tool_count} total tools")
+            except Exception as e:
+                logging.error(f"Failed to update registry info: {e}")
         
         # Create the input for this turn
         if self.last_result:
@@ -538,6 +550,14 @@ class AgentRunner(Generic[T]):
         """
         # Record user message in conversation memory
         self.orchestrator_context.memory.add_user_message(query)
+        
+        # Update the orchestrator context with registry info
+        try:
+            registry_info = self.registry.get_registry_info()
+            self.orchestrator_context.agent_registry = registry_info
+            logging.info(f"Updated orchestrator context registry info with {len(registry_info)} agents")
+        except Exception as e:
+            logging.error(f"Failed to update orchestrator registry info: {e}")
     
         # For simple queries, use regular orchestration without planning
         if self.last_result:
@@ -702,8 +722,10 @@ def main():
             tool_description = f"{entry.description} {tag_desc}"
             
             # Register the agent as a tool
+            # Note: For the planner tool, use the exact name 'use_planner' to match the tool_choice setting
+            tool_name = "use_planner" if name == "planner" else f"use_{name}"
             tool = entry.agent.as_tool(
-                tool_name=f"use_{name}",  # This is the name that must match in tool_choice
+                tool_name=tool_name,  # This is the name that must match in tool_choice
                 tool_description=tool_description
             )
             
@@ -715,6 +737,16 @@ def main():
     
     # Register all agents as tools for the orchestrator
     register_all_as_tools(agent_runner.orchestrator, registry)
+    
+    # Initialize the planning agent context with registry info
+    try:
+        planning_context = agent_runner._get_context("planner")
+        if planning_context:
+            registry_info = registry.get_registry_info()
+            planning_context.agent_registry = registry_info
+            logging.info(f"Pre-initialized planning context with {len(registry_info)} agents")
+    except Exception as e:
+        logging.error(f"Failed to pre-initialize planning context: {e}")
     
     # Run interactive session
     asyncio.run(agent_runner.interactive_session())

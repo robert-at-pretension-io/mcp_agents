@@ -10,8 +10,8 @@ def planning_instructions(ctx: RunContextWrapper[PlanningContext], agent: Agent)
     Dynamic instructions for planning agent that includes information about
     all available agents and tools from the registry.
     """
-    # Get agent registry from the context
-    registry = getattr(ctx.context, 'agent_registry', {})
+    # Get agent registry from the context using the property
+    registry = ctx.context.agent_registry
     
     # Format available agents and their tools
     agent_descriptions = []
@@ -113,10 +113,9 @@ Session ID: {ctx.context.session_id}
 
 """
 
-# Create the planning agent with dynamic instructions
+# Create the planning agent with dynamic instructions and the dummy tool
 planning_agent = Agent[PlanningContext](
     name="Planning Agent",
     instructions=planning_instructions,
     model="gpt-4o",
-    tools=[]  # Add the dummy tool here
 )

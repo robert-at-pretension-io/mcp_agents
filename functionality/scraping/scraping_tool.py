@@ -6,6 +6,8 @@ import json
 import re
 import logging
 
+from base_context import BaseAgentContext
+
 from agents import function_tool, RunContextWrapper
 
 # Set up logging
@@ -143,7 +145,7 @@ async def _scrape_url_with_scrapingbee(
 
 @function_tool
 async def scrape_url(
-    ctx: RunContextWrapper[Any], 
+    ctx: RunContextWrapper[BaseAgentContext], 
     url: str,
     render_js: Optional[bool] = None,
     timeout: Optional[int] = None,

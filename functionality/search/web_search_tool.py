@@ -4,6 +4,9 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from agents import function_tool, RunContextWrapper
 
+from base_context import BaseAgentContext
+
+
 class SearchResult(BaseModel):
     """Represents a single search result from Brave Search"""
     title: str = Field(description="The title of the search result")
@@ -75,7 +78,7 @@ async def _perform_brave_search(query: str, count: int = 10) -> SearchResults:
             )
 
 @function_tool
-async def brave_search(ctx: RunContextWrapper[Any], query: str, count: int) -> SearchResults:
+async def brave_search(ctx: RunContextWrapper[BaseAgentContext], query: str, count: int) -> SearchResults:
     """Web search tool powered by Brave Search that retrieves relevant results from across the internet. Use this to:
             
     1. Find current information and facts from the web
