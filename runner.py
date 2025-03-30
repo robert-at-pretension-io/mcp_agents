@@ -378,12 +378,13 @@ Your primary directive:
 3. Chain tools together - use the output of one tool as input to another
 4. Prioritize efficiency by using the minimal sufficient set of tools to solve the problem completely
 
-IMPORTANT: Do not limit yourself to just one tool per response. Effective orchestration means combining complementary capabilities within the same turn.
+IMPORTANT: For complex tasks, STRONGLY CONSIDER using the 'planner' agent FIRST to create an execution plan before proceeding with other tools. The planner will help you identify the optimal sequence of operations.
 
 Remember that complex problems are rarely solved with a single tool. Look for opportunities to:
+- Use the planner to create structured execution plans for multi-step tasks
 - Combine data retrieval with data processing
-- Pair knowledge discovery with execution capabilities
-- Use planning capabilities followed by immediate execution steps
+- Pair knowledge discovery with execution capabilities 
+- Follow planning with immediate execution steps
 
 User permissions: {permissions}
 Session ID: {ctx.context.session_id}
@@ -421,6 +422,7 @@ class AgentRunner(Generic[T]):
         
         # Create orchestrator
         self.orchestrator = create_orchestrator_agent(self.registry)
+        # Note: All agents will be registered as tools for the orchestrator in main()
     
     def _get_context(self, agent_name: str) -> Optional[Any]:
         """Get or create context for an agent"""
@@ -506,7 +508,7 @@ class AgentRunner(Generic[T]):
             query: User query to process
             
         Returns:
-            Orchestrator or specialized agent response
+            Orchestrator response
         """
         # Record user message in conversation memory
         self.orchestrator_context.memory.add_user_message(query)
@@ -665,8 +667,32 @@ def main():
         context_factory=None  # No special context needed
     )
     
+    # Function to register all agents as tools for the orchestrator
+    def register_all_as_tools(orchestrator: Agent, registry: AgentRegistry):
+        """Register all agents as tools for the orchestrator"""
+        for name, entry in registry.agents.items():
+            # Skip the orchestrator itself
+            if name == "orchestrator":
+                continue
+                
+            # Create tool description that includes tags
+            tag_desc = f"[Tags: {', '.join(entry.tags)}]"
+            tool_description = f"{entry.description} {tag_desc}"
+            
+            # Register the agent as a tool
+            tool = entry.agent.as_tool(
+                tool_name=f"use_{name}",  # This is the name that must match in tool_choice
+                tool_description=tool_description
+            )
+            
+            # Add to orchestrator's tools
+            orchestrator.tools.append(tool)
+    
     # Create agent runner with the registry
     agent_runner = AgentRunner(registry)
+    
+    # Register all agents as tools for the orchestrator
+    register_all_as_tools(agent_runner.orchestrator, registry)
     
     # Run interactive session
     asyncio.run(agent_runner.interactive_session())
