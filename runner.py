@@ -500,9 +500,64 @@ class AgentRunner(Generic[T]):
         
         return response
     
+    async def _is_complex_query(self, query: str) -> bool:
+        """
+        Determine if a query is complex and would benefit from planning.
+        
+        Complex queries typically:
+        - Contain multiple distinct tasks or steps
+        - Require coordination between different capabilities
+        - Involve conditional logic or complex workflows
+        - Need structured execution planning
+        
+        Args:
+            query: The user query to analyze
+            
+        Returns:
+            True if query is complex and would benefit from planning, False otherwise
+        """
+        # Keywords suggesting complexity
+        complexity_signals = [
+            "steps", "workflow", "sequence", "procedure", "process", 
+            "multiple", "several", "various", "different", "series",
+            "first", "then", "finally", "after", "before", "following",
+            "plan", "coordinate", "organize", "arrange", "automate",
+            "build", "create", "develop", "implement", "set up",
+            "complex", "complicated", "sophisticated", "advanced",
+            "analyze and", "research and", "find and then", "search and then",
+            "if", "when", "unless", "depending on", "based on the results"
+        ]
+        
+        # Check for presence of complexity signals
+        query_lower = query.lower()
+        signal_count = sum(1 for signal in complexity_signals if signal in query_lower)
+        
+        # Basic heuristic: if 2+ complexity signals are found, it's likely complex
+        # This threshold can be adjusted based on observed performance
+        if signal_count >= 2:
+            return True
+            
+        # Check for multiple distinct task indicators (potential step sequences)
+        task_separators = ["and", "then", "next", "after", "finally", "lastly", "before"]
+        task_separator_count = sum(1 for sep in task_separators if f" {sep} " in f" {query_lower} ")
+        
+        # If there are multiple task separators, likely complex
+        if task_separator_count >= 2:
+            return True
+            
+        # Check for length as a weak signal (complex queries tend to be longer)
+        # Only consider as a supporting factor, not a primary one
+        if len(query.split()) > 25 and (signal_count > 0 or task_separator_count > 0):
+            return True
+            
+        return False
+
     async def run_orchestrator(self, query: str) -> str:
         """
         Run the orchestrator agent with a query.
+        
+        For complex queries, this will first use the planner agent to create a plan
+        before proceeding with the orchestrator to execute the plan.
         
         Args:
             query: User query to process
@@ -513,19 +568,63 @@ class AgentRunner(Generic[T]):
         # Record user message in conversation memory
         self.orchestrator_context.memory.add_user_message(query)
         
-        # Create the input for this turn
-        if self.last_result:
-            # Use the previous result to maintain conversation history
-            # Add the new user query to the previous conversation
-            input_data = self.last_result.to_input_list() + [
-                {"role": "user", "content": query}
-            ]
+        # Check if query is complex and would benefit from planning
+        is_complex = await self._is_complex_query(query)
+        
+        # If complex, route through planner first
+        if is_complex:
+            try:
+                # Call planner agent first to create a plan
+                planner_query = f"Create an execution plan for this task: {query}"
+                plan = await self.run_agent("planner", planner_query)
+                
+                # Modify the query to include the plan for the orchestrator
+                enhanced_query = (
+                    f"I need help with this task: {query}\n\n"
+                    f"Here's a plan that was created to approach this:\n{plan}\n\n"
+                    f"Please execute this plan using the most appropriate tools for each step."
+                )
+                
+                # Create the input for this turn (with the enhanced query)
+                if self.last_result:
+                    # Use the previous result to maintain conversation history
+                    # But replace the last user query with our enhanced one
+                    input_data = self.last_result.to_input_list()[:-1] + [
+                        {"role": "user", "content": enhanced_query}
+                    ]
+                else:
+                    # First turn, use conversation memory
+                    input_data = self._prepare_input_from_memory()
+                    # Replace the last query or add if not present
+                    if input_data and input_data[-1]["role"] == "user":
+                        input_data[-1]["content"] = enhanced_query
+                    else:
+                        input_data.append({"role": "user", "content": enhanced_query})
+            except Exception as e:
+                # If planning fails, fall back to regular orchestration
+                logging.warning(f"Planning failed, falling back to regular orchestration: {e}")
+                # Use original query unchanged
+                enhanced_query = query
+                
+                # Create the input for this turn (with original query)
+                if self.last_result:
+                    input_data = self.last_result.to_input_list() + [
+                        {"role": "user", "content": query}
+                    ]
+                else:
+                    input_data = self._prepare_input_from_memory()
+                    if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
+                        input_data.append({"role": "user", "content": query})
         else:
-            # First turn, use conversation memory
-            input_data = self._prepare_input_from_memory()
-            if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
-                # Make sure the latest user query is included
-                input_data.append({"role": "user", "content": query})
+            # For simple queries, use regular orchestration without planning
+            if self.last_result:
+                input_data = self.last_result.to_input_list() + [
+                    {"role": "user", "content": query}
+                ]
+            else:
+                input_data = self._prepare_input_from_memory()
+                if not input_data or input_data[-1]["role"] != "user" or input_data[-1]["content"] != query:
+                    input_data.append({"role": "user", "content": query})
         
         # Use the OpenAI Agents SDK's tracing with consistent group_id
         with trace(
